@@ -1,0 +1,14 @@
+k3s version use kora hoyche :"v1.29.4-rc1-k3s1"
+
+
+
+errrors 1:
+PS D:\projects\k3d-update> go run .       
+# github.com/docker/docker/client
+C:\Users\fazlu\go\pkg\mod\github.com\docker\docker@v26.1.0+incompatible\client\errors.go:28:16: undefined: errors.As
+C:\Users\fazlu\go\pkg\mod\github.com\docker\docker@v26.1.0+incompatible\client\request.go:127:14: undefined: errors.Is
+C:\Users\fazlu\go\pkg\mod\github.com\docker\docker@v26.1.0+incompatible\client\request.go:129:14: undefined: errors.Is
+C:\Users\fazlu\go\pkg\mod\github.com\docker\docker@v26.1.0+incompatible\client\request.go:153:13: undefined: errors.Is
+
+Solution:
+

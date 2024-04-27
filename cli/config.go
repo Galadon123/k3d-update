@@ -1,16 +1,28 @@
-package main
+package run
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"path"
-
+	"strconv"
+	"github.com/docker/docker/api/types/container"
+	//"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
 	dockerClient "github.com/docker/docker/client"
 	"github.com/mitchellh/go-homedir"
 	"github.com/olekukonko/tablewriter"
 )
+
+type cluster struct {
+	name   string
+	image  string
+	status string
+	ports  []string
+	id     string
+}
 
 // createDirIfNotExists checks for the existence of a directory and creates it along with all required parents if not.
 // It returns an error if the directory (or parents) couldn't be created and nil if it worked fine or if the path already exists.
@@ -50,30 +62,30 @@ func getClusterDir(name string) (string, error) {
 
 // printClusters prints the names of existing clusters
 func printClusters(all bool) {
-	clusters, err := getClusters()
+	clusterNames, err := getClusterNames()
 	if err != nil {
 		log.Fatalf("ERROR: Couldn't list clusters -> %+v", err)
 	}
-	docker, err := dockerClient.NewEnvClient()
-	if err != nil {
-		log.Printf("WARNING: couldn't get docker info -> %+v", err)
+	if len(clusterNames) == 0 {
+		log.Printf("No clusters found!")
+		return
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"NAME", "IMAGE", "STATUS"})
 
-	for _, cluster := range clusters {
-		containerInfo, _ := docker.ContainerInspect(context.Background(), cluster)
-		clusterData := []string{cluster, containerInfo.Config.Image, containerInfo.ContainerJSONBase.State.Status}
-		if containerInfo.ContainerJSONBase.State.Status == "running" || all {
+	for _, clusterName := range clusterNames {
+		cluster, _ := getCluster(clusterName)
+		clusterData := []string{cluster.name, cluster.image, cluster.status}
+		if cluster.status == "running" || all {
 			table.Append(clusterData)
 		}
 	}
 	table.Render()
 }
 
-// getClusters returns a list of cluster names which are folder names in the config directory
-func getClusters() ([]string, error) {
+// getClusterNames returns a list of cluster names which are folder names in the config directory
+func getClusterNames() ([]string, error) {
 	homeDir, err := homedir.Dir()
 	if err != nil {
 		log.Printf("ERROR: Couldn't get user's home directory")
@@ -92,5 +104,43 @@ func getClusters() ([]string, error) {
 		}
 	}
 	return clusters, nil
+}
+
+// getCluster creates a cluster struct with populated information fields
+func getCluster(name string) (cluster, error) {
+	cluster := cluster{
+		name:   name,
+		image:  "UNKNOWN",
+		status: "UNKNOWN",
+		ports:  []string{"UNKNOWN"},
+		id:     "UNKNOWN",
+	}
+	ctx := context.Background()
+	docker, err := dockerClient.NewEnvClient()
+	if err != nil {
+		log.Printf("ERROR: couldn't create docker client -> %+v", err)
+		return cluster, err
+	}
+	filters := filters.NewArgs()
+	filters.Add("label", "app=k3d")
+	filters.Add("label", fmt.Sprintf("cluster=%s", cluster.name))
+	filters.Add("label", "component=server")
+
+	containerList, err := docker.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: filters,
+	})
+	if err != nil {
+		return cluster, fmt.Errorf("WARNING: couldn't get docker info for [%s] -> %+v", cluster.name, err)
+	}
+	container := containerList[0]
+	cluster.image = container.Image
+	cluster.status = container.State
+	for _, port := range container.Ports {
+		cluster.ports = append(cluster.ports, strconv.Itoa(int(port.PublicPort)))
+	}
+	cluster.id = container.ID
+
+	return cluster, nil
 }
 
