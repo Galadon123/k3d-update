@@ -1,0 +1,3 @@
+1.io.Copy(os.Stdout, reader): This copies the data from the reader (which is likely a Docker command's output) to os.Stdout, effectively printing the output to the console.
+
+2.io.Copy(ioutil.Discard, reader): If verbose is not set, the output is discarded instead of being printed to the console.

@@ -7,15 +7,18 @@ import (
 	"log"
 	"os"
 	"time"
+	"io/ioutil"
 
 	"github.com/docker/go-connections/nat"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 )
 //This Go code defines a function createServer that uses the Docker SDK for Go to create and start a Docker container. 
 func createServer(verbose bool, image string, port string, args []string, env []string, name string, volumes []string) (string, error) {  //
+	log.Printf("Creating server using %s...\n", image)
 	ctx := context.Background()
 	docker, err := client.NewEnvClient()
 	if err != nil {
@@ -31,8 +34,12 @@ func createServer(verbose bool, image string, port string, args []string, env []
 		if err != nil {
 			log.Printf("WARNING: couldn't get docker output\n%+v", err)
 		}
-	}//docker er output niye asteche
-
+	}else {
+		_, err := io.Copy(ioutil.Discard, reader)
+		if err != nil {
+			log.Printf("WARNING: couldn't get docker output\n%+v", err)
+		}
+	}
 	containerLabels := make(map[string]string)
 	containerLabels["app"] = "k3d"
 	containerLabels["component"] = "server"
@@ -57,6 +64,15 @@ func createServer(verbose bool, image string, port string, args []string, env []
 	if len(volumes) > 0 && volumes[0] != "" {
 		hostConfig.Binds = volumes
 	}
+	//?kichu buji nai
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			name: &network.EndpointSettings{
+				Aliases: []string{containerName},
+			},
+		},
+	}
+
 	resp, err := docker.ContainerCreate(ctx, &container.Config{
 		Image: image,
 		Cmd:   append([]string{"server"}, args...),
@@ -65,7 +81,7 @@ func createServer(verbose bool, image string, port string, args []string, env []
 		},
 		Env:    env,
 		Labels: containerLabels,
-	}, hostConfig, nil,nil, containerName)
+	}, hostConfig, networkingConfig,nil, containerName)
 	if err != nil {
 		return "", fmt.Errorf("ERROR: couldn't create container %s\n%+v", containerName, err)
 	}
@@ -75,7 +91,6 @@ func createServer(verbose bool, image string, port string, args []string, env []
 	}
 
 	return resp.ID, nil
-
 }
 
 func createWorker(verbose bool, image string, args []string, env []string, name string, volumes []string, postfix string, serverPort string) (string, error) {
@@ -117,12 +132,18 @@ func createWorker(verbose bool, image string, args []string, env []string, name 
 	if len(volumes) > 0 && volumes[0] != "" {
 		hostConfig.Binds = volumes
 	}
-
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			name: &network.EndpointSettings{
+				Aliases: []string{containerName},
+			},
+		},
+	}
 	resp, err := docker.ContainerCreate(ctx, &container.Config{
 		Image:  image,
 		Env:    env,
 		Labels: containerLabels,
-	}, hostConfig, nil,nil, containerName)
+	}, hostConfig, networkingConfig,nil, containerName)
 	if err != nil {
 		return "", fmt.Errorf("ERROR: couldn't create container %s\n%+v", containerName, err)
 	}

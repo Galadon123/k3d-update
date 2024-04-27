@@ -78,7 +78,7 @@ func main() {
 				},
 				cli.IntFlag{
 					Name:  "workers",
-					Value: 0,
+					Value: 2,
 					Usage: "Specify how many worker nodes you want to spawn",
 				},
 			},

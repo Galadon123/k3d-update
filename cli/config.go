@@ -124,7 +124,7 @@ func getClusters() (map[string]cluster, error) {
 	filters := filters.NewArgs()
 	filters.Add("label", "app=k3d")
 	filters.Add("label", "component=server")
-
+    //server component gula niye asar jonno query generate korteche
 	k3dServers, err := docker.ContainerList(ctx, container.ListOptions{
 		All:     true,
 		Filters: filters,
@@ -134,16 +134,20 @@ func getClusters() (map[string]cluster, error) {
 	}
 
 	clusters := make(map[string]cluster)
+
+	filters.Del("label", "component=server")
+	filters.Add("label", "component=worker")//worker component gula niye asar jonno query generate korteche
+
 	for _, server := range k3dServers {
 		filters.Add("label", fmt.Sprintf("cluster=%s", server.Labels["cluster"]))
-		filters.Del("label", "component=server")
-		filters.Add("label", "component=worker")
+
+		
 		workers, err := docker.ContainerList(ctx, container.ListOptions{
 			All:     true,
 			Filters: filters,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("WARNING: couldn't list worker containers for cluster %s\n%+v", server.Labels["cluster"], err)
+			log.Printf("WARNING: couldn't list worker containers for cluster %s\n%+v", server.Labels["cluster"], err)
 		}
 		serverPorts := []string{}
 		for _, port := range server.Ports {
@@ -157,6 +161,8 @@ func getClusters() (map[string]cluster, error) {
 			server:      server,
 			workers:     workers,
 		}
+		// clear label filters before searching for next cluster
+		filters.Del("label", fmt.Sprintf("cluster=%s", server.Labels["cluster"]))
 	}
 	return clusters, nil
 }

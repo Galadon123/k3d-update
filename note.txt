@@ -1,6 +1,6 @@
 k3s version use kora hoyche :"v1.29.4-rc1-k3s1"
 
-
+commit :connect workers and server via own docker network
 
 errrors 1:
 PS D:\projects\k3d-update> go run .       
@@ -12,3 +12,4 @@ C:\Users\fazlu\go\pkg\mod\github.com\docker\docker@v26.1.0+incompatible\client\r
 
 Solution:
 
+?
