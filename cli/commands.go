@@ -83,10 +83,14 @@ func CreateCluster(c *cli.Context) error {
 		env = append(env, c.StringSlice("env")...)
 	}
 	k3sClusterSecret := ""
+	k3sNewSecret :=""
 	if c.Int("workers") > 0 {
 		k3sClusterSecret = fmt.Sprintf("K3S_CLUSTER_SECRET=%s", GenerateRandomString(20))
+		
 		//fmt.Printf("k3sClusterSecret: %s\n",k3sClusterSecret)
 		env = append(env, k3sClusterSecret)
+		k3sNewSecret = fmt.Sprintf("K3S_TOKEN=%s=%s", GenerateRandomString(20))
+		env = append(env, k3sNewSecret)
 	}
 	// let's go
 	log.Printf("Creating cluster [%s]", c.String("name"))
@@ -148,9 +152,11 @@ kubectl cluster-info`, os.Args[0], c.String("name"))
 	if c.Int("workers") > 0 {
 		k3sWorkerArgs := []string{}
 		
-		env := []string{k3sClusterSecret}
+		//env := []string{k3sClusterSecret}
+		//fmt.Println("worker node error kujtechi =>",env)
 		log.Printf("Booting %s workers for cluster %s", strconv.Itoa(c.Int("workers")), c.String("name"))
 		for i := 0; i < c.Int("workers"); i++ {
+			env := []string{k3sClusterSecret, k3sNewSecret}
 			workerID, err := createWorker(
 				c.GlobalBool("verbose"),
 				image,
