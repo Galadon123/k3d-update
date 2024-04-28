@@ -13,9 +13,25 @@ import (
 
 func createClusterNetwork(clusterName string) (string, error) {
 	ctx := context.Background()
-	docker, err := client.NewEnvClient()
+	docker, err := client.NewClientWithOpts(client.FromEnv)
+
 	if err != nil {
 		return "", fmt.Errorf("ERROR: couldn't create docker client\n%+v", err)
+	}
+	args := filters.NewArgs()
+	args.Add("label", "app=k3d")
+	args.Add("label", "cluster="+clusterName)
+	nl, err := docker.NetworkList(ctx, types.NetworkListOptions{Filters: args})
+	if err != nil {
+		return "", fmt.Errorf("Failed to list networks\n%+v", err)
+	}
+
+	if len(nl) > 1 {
+		log.Printf("WARNING: Found %d networks for %s when we only expect 1\n", len(nl), clusterName)
+	}
+
+	if len(nl) > 0 {
+		return nl[0].ID, nil
 	}
 
 	resp, err := docker.NetworkCreate(ctx, clusterName, types.NetworkCreate{
@@ -33,7 +49,8 @@ func createClusterNetwork(clusterName string) (string, error) {
 
 func deleteClusterNetwork(clusterName string) error {
 	ctx := context.Background()
-	docker, err := client.NewEnvClient()
+	docker, err := client.NewClientWithOpts(client.FromEnv)
+
 	if err != nil {
 		return fmt.Errorf("ERROR: couldn't create docker client\n%+v", err)
 	}

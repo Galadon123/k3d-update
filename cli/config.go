@@ -3,7 +3,7 @@ package run
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	//"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -92,31 +92,32 @@ func printClusters(all bool) {
 }
 
 // getClusterNames returns a list of cluster names which are folder names in the config directory
-func getClusterNames() ([]string, error) {
-	homeDir, err := homedir.Dir()
-	if err != nil {
-		log.Printf("ERROR: Couldn't get user's home directory")
-		return nil, err
-	}
-	configDir := path.Join(homeDir, ".config", "k3d")
-	files, err := ioutil.ReadDir(configDir)
-	if err != nil {
-		log.Printf("ERROR: Couldn't list files in [%s]", configDir)
-		return nil, err
-	}
-	clusters := []string{}
-	for _, file := range files {
-		if file.IsDir() {
-			clusters = append(clusters, file.Name())
-		}
-	}
-	return clusters, nil
-}
+// func getClusterNames() ([]string, error) {
+// 	homeDir, err := homedir.Dir()
+// 	if err != nil {
+// 		log.Printf("ERROR: Couldn't get user's home directory")
+// 		return nil, err
+// 	}
+// 	configDir := path.Join(homeDir, ".config", "k3d")
+// 	files, err := ioutil.ReadDir(configDir)
+// 	if err != nil {
+// 		log.Printf("ERROR: Couldn't list files in [%s]", configDir)
+// 		return nil, err
+// 	}
+// 	clusters := []string{}
+// 	for _, file := range files {
+// 		if file.IsDir() {
+// 			clusters = append(clusters, file.Name())
+// 		}
+// 	}
+// 	return clusters, nil
+// }
 
 // getClusters uses the docker API to get existing clusters and compares that with the list of cluster directories
 func getClusters() (map[string]cluster, error) {
 	ctx := context.Background()
-	docker, err := client.NewEnvClient()
+	docker, err := client.NewClientWithOpts(client.FromEnv)
+
 	if err != nil {
 		return nil, fmt.Errorf("ERROR: couldn't create docker client\n%+v", err)
 	}

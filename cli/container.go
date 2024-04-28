@@ -8,38 +8,130 @@ import (
 	"os"
 	"time"
 	"io/ioutil"
-
 	"github.com/docker/go-connections/nat"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 )
+
+type PublishedPorts struct {
+	ExposedPorts map[nat.Port]struct{}
+	PortBindings   map[nat.Port][]nat.PortBinding
+}
+
+// The factory function for PublishedPorts
+func createPublishedPorts(specs []string) (*PublishedPorts, error) {
+	if  len(specs) == 0 {
+		var newExposedPorts = make(map[nat.Port]struct{}, 1)
+		var newPortBindings = make(map[nat.Port][]nat.PortBinding, 1)
+		return &PublishedPorts{ExposedPorts: newExposedPorts, PortBindings: newPortBindings}, nil
+	}
+
+	newExposedPorts, newPortBindings, err := nat.ParsePortSpecs(specs)
+	return &PublishedPorts{ExposedPorts: newExposedPorts, PortBindings: newPortBindings}, err
+}
+
+// Create a new PublishedPort structure, with all host ports are changed by a fixed  'offset'
+func (p PublishedPorts) Offset(offset int) (*PublishedPorts) {
+	var newExposedPorts = make(map[nat.Port]struct{}, len(p.ExposedPorts))
+	var newPortBindings = make(map[nat.Port][]nat.PortBinding, len(p.PortBindings))
+
+	for k, v := range p.ExposedPorts {
+              newExposedPorts[k] = v
+	}
+
+	for k, v := range p.PortBindings {
+		bindings := make([]nat.PortBinding, len(v))
+		for i, b := range v {
+			port, _ := nat.ParsePort(b.HostPort)
+			bindings[i].HostIP = b.HostIP
+			bindings[i].HostPort = fmt.Sprintf("%d",  port + offset)
+		}
+		newPortBindings[k] = bindings
+	}
+
+	return &PublishedPorts{ExposedPorts: newExposedPorts, PortBindings: newPortBindings}
+}
+
+// Create a new PublishedPort struct with one more port, based on 'portSpec'
+func (p *PublishedPorts) AddPort(portSpec string) (*PublishedPorts, error) {
+	portMappings, err := nat.ParsePortSpec(portSpec)
+	if err != nil {
+		return nil, err
+	}
+
+	var newExposedPorts = make(map[nat.Port]struct{}, len(p.ExposedPorts) + 1)
+	var newPortBindings = make(map[nat.Port][]nat.PortBinding, len(p.PortBindings) + 1)
+
+	// Populate the new maps
+	for k, v := range p.ExposedPorts {
+              newExposedPorts[k] = v
+	}
+
+	for k, v := range p.PortBindings {
+              newPortBindings[k] = v
+	}
+
+	// Add new ports
+	for _, portMapping := range portMappings {
+		port := portMapping.Port
+		if _, exists := newExposedPorts[port]; !exists {
+			newExposedPorts[port] = struct{}{}
+		}
+
+		bslice, exists := newPortBindings[port];
+		if !exists {
+			bslice = []nat.PortBinding{}
+		}
+		newPortBindings[port] = append(bslice, portMapping.Binding)
+	}
+
+	return &PublishedPorts{ExposedPorts: newExposedPorts, PortBindings: newPortBindings}, nil
+}
+
+
 //This Go code defines a function createServer that uses the Docker SDK for Go to create and start a Docker container. 
-func createServer(verbose bool, image string, port string, args []string, env []string, name string, volumes []string) (string, error) {  //
-	log.Printf("Creating server using %s...\n", image)
+func startContainer(verbose bool, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (string, error) {
 	ctx := context.Background()
-	docker, err := client.NewEnvClient()
+
+	docker, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		return "", fmt.Errorf("ERROR: couldn't create docker client\n%+v", err)
 	}
-
-	reader, err := docker.ImagePull(ctx, image, types.ImagePullOptions{})
+	log.Printf("Pulling image %s...\n", config.Image)
+	reader, err := docker.ImagePull(ctx, config.Image, image.PullOptions{})
+		if err != nil {
+			return "", fmt.Errorf("ERROR: couldn't pull image %s\n%+v", config.Image, err)
+		}
+		defer reader.Close()
+		if verbose {
+			_, err := io.Copy(os.Stdout, reader)
+			if err != nil {
+				log.Printf("WARNING: couldn't get docker output\n%+v", err)
+			}
+		} else {
+			_, err := io.Copy(ioutil.Discard, reader)
+			if err != nil {
+				log.Printf("WARNING: couldn't get docker output\n%+v", err)
+			}
+		}
+	resp, err := docker.ContainerCreate(ctx, config, hostConfig, networkingConfig,nil, containerName)
 	if err != nil {
-		return "", fmt.Errorf("ERROR: couldn't pull image %s\n%+v", image, err)
+		return "", fmt.Errorf("ERROR: couldn't create container after pull %s\n%+v", containerName, err)
 	}
-	if verbose {
-		_, err := io.Copy(os.Stdout, reader) // TODO: only if verbose mode
-		if err != nil {
-			log.Printf("WARNING: couldn't get docker output\n%+v", err)
-		}
-	}else {
-		_, err := io.Copy(ioutil.Discard, reader)
-		if err != nil {
-			log.Printf("WARNING: couldn't get docker output\n%+v", err)
-		}
+	if err := docker.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return "", err
 	}
+
+	return resp.ID, nil
+}
+
+
+func createServer(verbose bool, image string, port string, args []string, env []string, name string, volumes []string,pPorts *PublishedPorts) (string, error) {
+	log.Printf("Creating server using %s...\n", image)
+
 	containerLabels := make(map[string]string)
 	containerLabels["app"] = "k3d"
 	containerLabels["component"] = "server"
@@ -47,18 +139,13 @@ func createServer(verbose bool, image string, port string, args []string, env []
 	containerLabels["cluster"] = name
 
 	containerName := fmt.Sprintf("k3d-%s-server", name)
-
-	containerPort := nat.Port(fmt.Sprintf("%s/tcp", port))
-
+	apiPortSpec := fmt.Sprintf("0.0.0.0:%s:%s/tcp", port, port)
+	serverPublishedPorts, err := pPorts.AddPort(apiPortSpec)
+	if (err != nil) {
+		log.Fatalf("Error: failed to parse API port spec %s \n%+v", apiPortSpec, err)
+	}
 	hostConfig := &container.HostConfig{
-		PortBindings: nat.PortMap{
-			containerPort: []nat.PortBinding{
-				{
-					HostIP:   "0.0.0.0",
-					HostPort: port,
-				},
-			},
-		},
+		PortBindings: serverPublishedPorts.PortBindings,
 		Privileged: true,
 	}
 	if len(volumes) > 0 && volumes[0] != "" {
@@ -67,49 +154,29 @@ func createServer(verbose bool, image string, port string, args []string, env []
 	//?kichu buji nai
 	networkingConfig := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			name: &network.EndpointSettings{
+			name: {
 				Aliases: []string{containerName},
 			},
 		},
 	}
 
-	resp, err := docker.ContainerCreate(ctx, &container.Config{
+	config := &container.Config{
+		Hostname: containerName,
 		Image: image,
 		Cmd:   append([]string{"server"}, args...),
-		ExposedPorts: nat.PortSet{
-			containerPort: struct{}{},
-		},
+		ExposedPorts: serverPublishedPorts.ExposedPorts,
 		Env:    env,
 		Labels: containerLabels,
-	}, hostConfig, networkingConfig,nil, containerName)
+	}
+	id, err := startContainer(verbose, config, hostConfig, networkingConfig, containerName)
 	if err != nil {
 		return "", fmt.Errorf("ERROR: couldn't create container %s\n%+v", containerName, err)
 	}
 
-	if err := docker.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return "", fmt.Errorf("ERROR: couldn't start container %s\n%+v", containerName, err)
-	}
-
-	return resp.ID, nil
+	return id, nil
 }
 
-func createWorker(verbose bool, image string, args []string, env []string, name string, volumes []string, postfix string, serverPort string) (string, error) {
-	ctx := context.Background()
-	docker, err := client.NewEnvClient()
-	if err != nil {
-		return "", fmt.Errorf("ERROR: couldn't create docker client\n%+v", err)
-	}
-
-	reader, err := docker.ImagePull(ctx, image, types.ImagePullOptions{})
-	if err != nil {
-		return "", fmt.Errorf("ERROR: couldn't pull image %s\n%+v", image, err)
-	}
-	if verbose {
-		_, err := io.Copy(os.Stdout, reader)
-		if err != nil {
-			log.Printf("WARNING: couldn't get docker output\n%+v", err)
-		}
-	}
+func createWorker(verbose bool, image string, args []string, env []string, name string, volumes []string, postfix int, serverPort string ,pPorts *PublishedPorts) (string, error) {
 
 	containerLabels := make(map[string]string)
 	containerLabels["app"] = "k3d"
@@ -117,15 +184,18 @@ func createWorker(verbose bool, image string, args []string, env []string, name 
 	containerLabels["created"] = time.Now().Format("2006-01-02 15:04:05")
 	containerLabels["cluster"] = name
 
-	containerName := fmt.Sprintf("k3d-%s-worker-%s", name, postfix)
+	containerName := fmt.Sprintf("k3d-%s-worker-%d", name, postfix)
 
 	env = append(env, fmt.Sprintf("K3S_URL=https://k3d-%s-server:%s", name, serverPort))
+
+	workerPublishedPorts := pPorts.Offset(postfix + 1)
 
 	hostConfig := &container.HostConfig{
 		Tmpfs: map[string]string{
 			"/run":     "",
 			"/var/run": "",
 		},
+		PortBindings: workerPublishedPorts.PortBindings,
 		Privileged: true,
 	}
 
@@ -134,38 +204,36 @@ func createWorker(verbose bool, image string, args []string, env []string, name 
 	}
 	networkingConfig := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			name: &network.EndpointSettings{
+			name:{
 				Aliases: []string{containerName},
 			},
 		},
 	}
-	resp, err := docker.ContainerCreate(ctx, &container.Config{
+	config := &container.Config{
+		Hostname: containerName,
 		Image:  image,
 		Env:    env,
 		Labels: containerLabels,
-	}, hostConfig, networkingConfig,nil, containerName)
-	if err != nil {
-		return "", fmt.Errorf("ERROR: couldn't create container %s\n%+v", containerName, err)
+		ExposedPorts: workerPublishedPorts.ExposedPorts,
 	}
-
-	if err := docker.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	id, err := startContainer(verbose, config, hostConfig, networkingConfig, containerName)
+	if err != nil {
 		return "", fmt.Errorf("ERROR: couldn't start container %s\n%+v", containerName, err)
 	}
 
-	return resp.ID, nil
+	return id, nil
 }
 
 func removeContainer(ID string) error {
 	ctx := context.Background()
-	docker, err := client.NewEnvClient()
+	docker, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		return fmt.Errorf("ERROR: couldn't create docker client\n%+v", err)
 	}
-	if err := docker.ContainerRemove(ctx, ID, container.RemoveOptions{}); err != nil {
-		log.Printf("WARNING: couldn't delete container [%s], trying a force remove now.", ID)
-		if err := docker.ContainerRemove(ctx, ID, container.RemoveOptions{Force: true}); err != nil {
-			return fmt.Errorf("FAILURE: couldn't delete container [%s] -> %+v", ID, err)
-		}
+	
+	if err := docker.ContainerRemove(ctx, ID, container.RemoveOptions{Force: true}); err != nil {
+		return fmt.Errorf("FAILURE: couldn't delete container [%s] -> %+v", ID, err)
 	}
+	
 	return nil
 }

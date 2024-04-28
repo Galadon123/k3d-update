@@ -3,13 +3,14 @@ package main
 import (
 	"log"
 	"os"
-
+	"fmt"
 	run "cluster/cli"
 	"cluster/version"
 
 	"github.com/urfave/cli"
 )
-
+// defaultK3sImage specifies the default image being used for server and workers
+const defaultK3sImage = "docker.io/rancher/k3s"
 // main represents the CLI application
 func main() {
 
@@ -49,9 +50,12 @@ func main() {
 					Name:  "volume, v",
 					Usage: "Mount one or more volumes into the cluster node (Docker notation: `source:destination[,source:destination]`)",
 				},
+				cli.StringSliceFlag{
+					Name:  "publish, add-port",
+					Usage: "publish k3s node ports to the host (Docker notation: `ip:public:private/proto`, use multiple options to expose more ports)",
+				},
 				cli.StringFlag{
-					Name:  "version",
-					Value: "v1.29.4-rc1-k3s1",
+					Name:  "version ",
 					Usage: "Choose the k3s image version",
 				},
 				cli.IntFlag{
@@ -67,6 +71,11 @@ func main() {
 				cli.BoolFlag{
 					Name:  "wait, w",
 					Usage: "Wait for the cluster to come up",
+				},
+				cli.StringFlag{
+					Name:  "image, i",
+					Usage: "Specify a k3s image (Format: <repo>/<image>:<tag>)",
+					Value: fmt.Sprintf("%s:%s", defaultK3sImage, version.GetK3sVersion()),
 				},
 				cli.StringSliceFlag{
 					Name:  "server-arg, x",
